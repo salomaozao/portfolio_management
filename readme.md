@@ -1,0 +1,1 @@
+baseado no ep. 16 da série: [Topics in Mathematics w Applications in Finance](https://www.youtube.com/playlist?list=PLUl4u3cNGP63ctJIEC1UnZ0btsphnnoHR)

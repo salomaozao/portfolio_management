@@ -1,16 +1,29 @@
+rm(list = ls())
+
 library(tidyquant)
 library(tidyverse)
 library(slider)
 library(jsonlite)
-
+library(lubridate)
 #### ================== 1. Get & Proccess Data
 # price, volatility, expected return, correlations (p) para preço e IBOV; Dados do CDI acumulado
 
 ### Para as ações do portfólio: Retornos, volatilidade
-tickers = c("BABA", "PETR4.SA")
-
-start = "2018-01-01"
-end = "2022-08-15"
+tickers = c(
+  "XINA11",
+  "CURRENCY:BTCBRL",
+  "BSLV39",
+  "EMBJ3",
+  "BRAX11",
+  "GOLD11",
+  "SNDK",
+  "ITUB4",
+  "VALE3",
+  "AXIA3",
+  "TTWO"
+)
+end <- today()
+start <- end - years(2)
 
 stocks_data = tq_get(tickers, from = start, to = end) |>
   group_by(symbol) |>
@@ -22,6 +35,23 @@ stocks_data = tq_get(tickers, from = start, to = end) |>
   ) |>
   drop_na(vol_252) # remove os NAs do início da janela e do primeiro lag
 
+
+# Checagem:
+tickers_puxados <- unique(stocks_data$symbol)
+tickers_faltantes <- setdiff(tickers, tickers_puxados)
+
+if (length(tickers_faltantes) > 0) {
+  warning(
+    "OS SEGUINTES ATIVOS NÃO FORAM INCLUÍDOS NA ANÁLISE: ",
+    paste(tickers_faltantes, collapse = ", ")
+  )
+} else {
+  message(
+    "SUCESSO: Todos os ",
+    length(tickers),
+    " ativos foram carregados e processados."
+  )
+}
 
 ### Preço do ibov; Retorno esperado do mercado (R_m)
 ibov_data <- tq_get("^BVSP", from = start, to = end) |>
@@ -78,7 +108,7 @@ capm_results <- stocks_data |>
   select(symbol, date, log_return) |>
   drop_na(log_return) |>
   # Alinhamos as datas das ações com as datas do Ibovespa
-  inner_join(ibov_returns, by = "date") |>
+  inner_join(ibov_data, by = "date") |>
   group_by(symbol) |>
   summarise(
     # Beta = Covariância(Ativo, Mercado) / Variância(Mercado)
@@ -93,6 +123,7 @@ capm_results <- stocks_data |>
 ## β é o coeficiente angular / de sensibilidade; o quanto o ativo "alavanca" o mercado
 ## E[R_p] é o retorno esperado do Portfólio
 
+print("RETORNO ANUALIZADO ESPERADO")
 print(capm_results)
 
 ## (!) O modelo assume NADA DE DIVIDENDOS (que se estivessem sendo somados no R_p estariam junto com o R_f, no alpha - como risco livre?); Isso pode ser implementado no projeto
@@ -122,6 +153,7 @@ library(quadprog)
 
 # 1. Definir os inputs baseados no que você já calculou
 mu <- capm_results$expected_return # Vetor E[R] (CAPM)
+stocks_processed = row.names(cov_matrix)
 sigma_mat <- cov_matrix # Matriz de Covariância (Σ)
 n <- length(mu) # Número de ativos (BABA e PETR4)
 
@@ -138,7 +170,7 @@ bvec <- c(1, rep(0, n))
 # solve.QP(Dmat, dvec, Amat, bvec, meq)
 # meq = 1 indica que a primeira restrição é uma IGUALDADE (=1)
 otimizacao <- solve.QP(
-  Dmat = sigma_mat,
+  Dmat = cov_matrix * 252,
   dvec = rep(0, n),
   Amat = Amat,
   bvec = bvec,
@@ -150,4 +182,5 @@ pesos_otimos <- otimizacao$solution
 names(pesos_otimos) <- names(mu)
 
 print("Pesos Sugeridos pelo Modelo:")
+print(stocks_processed)
 print(round(pesos_otimos, 4))

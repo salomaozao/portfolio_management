@@ -1,7 +1,7 @@
 A ideia é que: Dado que cada ativo tem um retorno esperado e uma volatilidade, usaremos
 
 $$
-E\[R_p\] = w_1R_1 w_2R_2 \quad σ_p\^2 = w_1^2_1^2 + w_2 \sigma\_2\^2 + 2 \rho w_1 w_2 \sigma\_1\sigma\_2
+E\[R_p\] = w_1 R_1 w_2 R_2 \quad σ_p\^2 = w_1^2_1^2 + w_2 \sigma\_2\^2 + 2 \rho w_1 w_2 \sigma\_1\sigma\_2
 $$
 
 onde rho é a correlação entre os ativos 1 e 2
@@ -41,8 +41,9 @@ rf_diario = log(1 + rf_anual) / 252
 
 VALE3 = processar(brapi_high_low("VALE3", "2y")) # (R_i)
 
+
 # Como o processar() já calcula o log_return, vamos apenas renomeá-lo
-BVSP = processar(brapi_high_low("^BVSP", "2y")) |>
+BVSP = processar(brapi_high_low("BOVA11", "2y")) |>
   select(Date, log_return) |>
   rename("log_return_m" = log_return)
 
@@ -59,7 +60,7 @@ df_original <- VALE3 %>%
 # Objetivos:
 # 1. Selecionar uma gama de ativos
 # 2. Realizar análises
-    - Volatilidade: desvio padrão simples
+    - Volatilidade: desvio padrão simples dos últimos 252 dias
 
 ```{r}
 library(RcppRoll)
@@ -83,7 +84,7 @@ ggplot(df, aes(x = as.Date(Date), y = High)) +
 
 ```
 
-    - Retorno: esperado CAPM (Capital Asset Pricing Model): E[R_p] = R_f + β(E[R_m] - R_f) onde:
+    - Retorno esperado: CAPM (Capital Asset Pricing Model): E[R_p] = R_f + β(E[R_m] - R_f) onde:
         R_f é a **taxa de risco livre**
         E[R_m] é o retorno esperado do mercado
         R_m - R_f é o prêmio de risco; prêmio por assumir mais risco

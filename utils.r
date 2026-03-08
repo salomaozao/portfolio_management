@@ -99,45 +99,77 @@ library(httr)
 library(jsonlite)
 
 #' Função para retornar matriz de High/Low de uma ação
-#' @param ticker Ex: "PETR4", "VALE3"
+#' @param ticker Ex: "PETR4", "VALE3", "^BVSP"
 #' @param periodo Ex: "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"
 #' @param token Seu token da API BRAPI
-brapi_high_low <- function(ticker, periodo = "1mo", token = "tLki4EByiYvzUj9VTpT1Xe") {
-  
-  if (missing(ticker) || ticker == "") stop("Ticker não pode ser vazio.")
-  
-  ticker <- toupper(trimws(ticker))
-  
-  # Montando a URL com o range dinâmico
-  url <- paste0("https://brapi.dev/api/quote/", ticker, 
-                "?token=", token, 
-                "&range=", periodo, 
-                "&interval=1d")
-  
-  # Requisição
-  res <- GET(url)
-  
-  if (status_code(res) != 200) {
-    stop(paste("Erro na API:", status_code(res), "- Verifique o ticker ou o token."))
+brapi_high_low <- function(
+  ticker,
+  periodo = "1mo",
+  token = "tLki4EByiYvzUj9VTpT1Xe"
+) {
+  if (missing(ticker) || ticker == "") {
+    stop("Ticker não pode ser vazio.")
   }
-  
+  ticker <- toupper(trimws(ticker))
+
+  # Codificando a URL para transformar o ^ em %5E
+  # ticker_encoded <- URLencode(ticker, reserved = TRUE)
+
+  # Montando a URL com o range dinâmico e o ticker encodado
+  url <- paste0(
+    "https://brapi.dev/api/quote/",
+    ticker_encoded,
+    "?token=",
+    token,
+    "&range=",
+    periodo,
+    "&interval=1d"
+  )
+
+  # REQUEST
+  res <- GET(url)
+
+  if (status_code(res) != 200) {
+    stop(paste(
+      "Erro na API:",
+      status_code(res),
+      "- Verifique o ticker ou o token."
+    ))
+  }
+
   json <- fromJSON(content(res, as = "text", encoding = "UTF-8"))
-  
-  # Extrair o histórico de preços (desempacotando o data.frame interno)
+
+  if (is.null(json$results) || nrow(json$results) == 0) {
+    stop("Ticker não encontrado ou sem dados retornados pela BRAPI.")
+  }
+
   hist_df <- json$results$historicalDataPrice[[1]]
-  
+
   if (is.null(hist_df) || nrow(hist_df) == 0) {
     stop("Nenhum dado histórico encontrado para este período.")
   }
-  
-  # A BRAPI retorna a data em formato Timestamp Unix. Vamos converter para formato de Data legível.
-  datas_legiveis <- as.Date(as.POSIXct(hist_df$date, origin = "1970-01-01"))
-  
-  # Criando a matriz apenas com as colunas High e Low
-  matriz_hl <- cbind(High = hist_df$high, Low = hist_df$low)
-  
-  # Nomeando as linhas da matriz com as datas para facilitar a identificação
+
+  if (is.numeric(hist_df$date)) {
+    datas_legiveis <- as.Date(as.POSIXct(
+      hist_df$date,
+      origin = "1970-01-01",
+      tz = "UTC"
+    ))
+  } else {
+    datas_legiveis <- as.Date(hist_df$date)
+  }
+
+  matriz_hl <- cbind(
+    High = as.numeric(hist_df$high),
+    Low = as.numeric(hist_df$low)
+  )
+
   rownames(matriz_hl) <- as.character(datas_legiveis)
-  
+  matriz_hl <- matriz_hl[
+    !is.na(matriz_hl[, "High"]) & !is.na(matriz_hl[, "Low"]),
+    ,
+    drop = FALSE
+  ]
+
   return(matriz_hl)
 }

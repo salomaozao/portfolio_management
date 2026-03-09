@@ -1,5 +1,8 @@
 rm(list = ls())
 
+source("graphs.r")
+
+
 library(tidyquant)
 library(tidyverse)
 library(slider)
@@ -10,17 +13,17 @@ library(lubridate)
 
 ### Para as ações do portfólio: Retornos, volatilidade
 tickers = c(
-  "XINA11",
-  "CURRENCY:BTCBRL",
-  "BSLV39",
-  "EMBJ3",
-  "BRAX11",
-  "GOLD11",
-  "SNDK",
-  "ITUB4",
-  "VALE3",
-  "AXIA3",
-  "TTWO"
+  "XINA11.SA",
+  "BTC-BRL",
+  "BSLV39.SA",
+  "EMBR3.SA",
+  "BRAX11.SA",
+  "GOLD11.SA",
+  "ITUB4.SA",
+  "VALE3.SA",
+  "AXIA3.SA",
+  "TTWO",
+  "SNDK"
 )
 end <- today()
 start <- end - years(2)
@@ -179,8 +182,89 @@ otimizacao <- solve.QP(
 
 # 5. Extrair os pesos ideais
 pesos_otimos <- otimizacao$solution
-names(pesos_otimos) <- names(mu)
-
+df_pesos <- tibble(
+  symbol = row.names(sigma_mat),
+  alocacao_otima_pct = pesos_otimos * 100
+)
 print("Pesos Sugeridos pelo Modelo:")
-print(stocks_processed)
-print(round(pesos_otimos, 4))
+print(df_pesos)
+
+# ================== . Análises e Visualizações
+
+# Criar a tabela base com volatilidade e Sharpe
+stocks_stats <- capm_results |>
+  left_join(
+    stocks_data |>
+      group_by(symbol) |>
+      summarise(
+        volatilidade_anual_ultima = last(vol_252),
+        volatilidade_anual_média = mean(vol_252),
+        .groups = "drop"
+      ),
+    by = "symbol"
+  ) |>
+  mutate(sharpe_ratio = (expected_return - r_f) / volatilidade_anual_ultima)
+
+# Juntar os pesos GARANTINDO que a coluna tenha o nome correto
+stocks_stats <- stocks_stats |>
+  left_join(df_pesos, by = "symbol") |>
+  mutate(
+    # Garantir que se algum peso veio como NA (não processado), seja 0
+    alocacao_otima_pct = replace_na(alocacao_otima_pct, 0),
+    across(where(is.numeric), \(x) round(x, 4))
+  )
+
+print("TABELA FINAL CONSOLIDADA:")
+print(stocks_stats)
+
+# Rodar os gráficos (Agora com a tabela correta)
+gera_graf_fronteiras("TTWO", "VALE3.SA")
+gera_fronteira_global(mu, cov_matrix, stocks_stats)
+
+## ====================== BACKTESTING
+
+# 1. Preparar pesos (Garantindo que a soma seja exatamente 1 para evitar erros no tq_portfolio)
+w_backtest <- stocks_stats |>
+  select(symbol, alocacao_otima_pct) |>
+  mutate(weight = alocacao_otima_pct / 100) |>
+  select(symbol, weight)
+
+# 2. Calcular o retorno da carteira
+portfolio_returns <- stocks_data |>
+  tq_portfolio(
+    assets_col = symbol,
+    returns_col = log_return,
+    weights = w_backtest,
+    col_rename = "retorno_carteira"
+  )
+
+ibov_benchmark <- ibov_data |>
+  mutate(retorno_ibov = log_return_m) |>
+  select(date, retorno_ibov)
+# 3. Benchmark e Acúmulo
+comparativo_performance <- portfolio_returns |>
+  left_join(ibov_benchmark, by = "date") |>
+  mutate(
+    # Usando exp(cumsum) para retornos logarítmicos
+    Carteira = exp(cumsum(retorno_carteira)) * 100,
+    Ibovespa = exp(cumsum(retorno_ibov)) * 100
+  ) |>
+  pivot_longer(
+    cols = c(Carteira, Ibovespa),
+    names_to = "Estrategia",
+    values_to = "Valor"
+  )
+
+# 5. Plot Final
+ggplot(comparativo_performance, aes(x = date, y = Valor, color = Estrategia)) +
+  geom_line(size = 1) +
+  scale_color_manual(
+    values = c("Carteira" = "#2c3e50", "Ibovespa" = "#e74c3c")
+  ) +
+  labs(
+    title = "Performance Histórica: Markowitz vs. Ibovespa",
+    subtitle = "Simulação baseada na otimização de Variância Mínima",
+    x = "Período",
+    y = "Patrimônio Acumulado (R$)"
+  ) +
+  theme_minimal()

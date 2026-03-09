@@ -268,3 +268,68 @@ ggplot(comparativo_performance, aes(x = date, y = Valor, color = Estrategia)) +
     y = "Patrimônio Acumulado (R$)"
   ) +
   theme_minimal()
+
+## Tabela de rendimento
+# 1. Calcula o retorno acumulado real de cada ativo
+rendimento_historico <- stocks_data |>
+  group_by(symbol) |>
+  summarise(
+    Retorno_Real_Total = (exp(sum(log_return)) - 1) * 100,
+    .groups = "drop"
+  )
+
+# 2. Calcula o retorno acumulado da Carteira e do Ibovespa
+perf_resumo <- comparativo_performance |>
+  group_by(Estrategia) |>
+  summarise(
+    symbol = first(Estrategia),
+    Retorno_Real_Total = (last(Valor) - 100), # Partindo de base 100
+    .groups = "drop"
+  ) |>
+  select(symbol, Retorno_Real_Total)
+
+# 3. Consolida tudo na Stocks Stats
+tabela_final <- stocks_stats |>
+  select(symbol, expected_return, beta, alocacao_otima_pct) |>
+  left_join(rendimento_historico, by = "symbol") |>
+  bind_rows(perf_resumo) |>
+  mutate(
+    expected_return_pct = expected_return * 100,
+    across(where(is.numeric), \(x) round(x, 2))
+  ) |>
+  select(
+    Ativo = symbol,
+    `Peso (%)` = alocacao_otima_pct,
+    `Retorno Esperado (%)` = expected_return_pct,
+    `Retorno Real (%)` = Retorno_Real_Total,
+    Beta = beta
+  )
+
+print("RELATÓRIO DE RENDIMENTOS:")
+print(tabela_final)
+
+# ================== . Matriz de Correlação (Heatmap)
+# Transformar a matriz em formato longo para o ggplot
+cor_long <- as.data.frame(cor_matrix) |>
+  rownames_to_column(var = "Ativo1") |>
+  pivot_longer(cols = -Ativo1, names_to = "Ativo2", values_to = "Correlacao")
+
+ggplot(cor_long, aes(x = Ativo1, y = Ativo2, fill = Correlacao)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Correlacao, 2)), size = 3, color = "black") +
+  scale_fill_gradient2(
+    low = "#d73027",
+    mid = "white",
+    high = "#4575b4",
+    midpoint = 0,
+    limit = c(-1, 1),
+    name = "Correlação\n(Pearson)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  labs(
+    title = "Matriz de Dependência Linear entre Ativos",
+    subtitle = "Calculada sobre os log-retornos diários",
+    x = "",
+    y = ""
+  )

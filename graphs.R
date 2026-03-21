@@ -20,13 +20,13 @@ gera_graf_fronteiras = function(a, b) {
     )
   )
 
-  ggplot(fronteira_2, aes(x = risco, y = retorno)) +
+  ggplot(fronteira_2, aes(x = retorno, y = risco)) +
     # Linha da Fronteira
     geom_path(aes(color = "Fronteira Eficiente"), size = 1) +
     # Ponto do Ativo A (mapeado manualmente para gerar legenda)
-    geom_point(aes(x = v_a, y = r_a, color = "Ativo A"), size = 4) +
+    geom_point(aes(x = r_a, y = v_a, color = "Ativo A"), size = 4) +
     # Ponto do Ativo B (mapeado manualmente para gerar legenda)
-    geom_point(aes(x = v_b, y = r_b, color = "Ativo B"), size = 4) +
+    geom_point(aes(x = r_b, y = v_b, color = "Ativo B"), size = 4) +
     # Customização das cores e nomes na legenda
     scale_color_manual(
       name = "Legenda",
@@ -47,72 +47,76 @@ gera_graf_fronteiras = function(a, b) {
     theme(legend.position = "bottom")
 }
 
-gera_fronteira_global = function(mu, sigma_mat, stocks_stats, n_sim = 5000) {
-  n_ativos <- length(mu)
-
-  # 1. Simulação de Portfólios Aleatórios para preencher o gráfico
-  sim_resultados <- matrix(NA, nrow = n_sim, ncol = 2)
-  colnames(sim_resultados) <- c("Risco", "Retorno")
-
-  for (i in 1:n_sim) {
-    w_random <- runif(n_ativos)
-    w_random <- w_random / sum(w_random)
-
-    sim_resultados[i, "Retorno"] <- sum(w_random * mu)
-    sim_resultados[i, "Risco"] <- sqrt(
-      t(w_random) %*% (sigma_mat * 252) %*% w_random
-    )
+plot_fronteira_interativa <- function(mu, cov_matrix, r_f, n_sim = 5000) {
+  # Garante que mu seja um vetor nomeado (essencial para o hover)
+  if (is.null(names(mu))) {
+    names(mu) <- paste0("Ativo_", 1:length(mu))
   }
 
-  df_sim <- as_tibble(sim_resultados)
+  n_ativos <- length(mu)
+  nomes_ativos <- names(mu)
 
-  # 2. Ponto da Carteira Ótima (já calculada pelo seu solve.QP)
-  # Assumindo que 'otimizacao' e 'pesos_otimos' já existem no seu environment
-  risco_otimo <- sqrt(t(pesos_otimos) %*% (sigma_mat * 252) %*% pesos_otimos)
-  retorno_otimo <- sum(pesos_otimos * mu)
+  # 1. Simulação
+  sim_mat <- matrix(NA, nrow = n_sim, ncol = n_ativos + 2)
 
-  # 3. Plotagem
-  ggplot() +
-    # Nuvem de portfólios possíveis
-    geom_point(
-      data = df_sim,
-      aes(x = Risco, y = Retorno),
-      alpha = 0.2,
-      color = "grey"
-    ) +
-    # Ativos individuais
-    geom_point(
-      data = stocks_stats,
-      aes(x = volatilidade_anual_ultima, y = expected_return, color = symbol),
-      size = 3
-    ) +
-    geom_text(
-      data = stocks_stats,
-      aes(x = volatilidade_anual_ultima, y = expected_return, label = symbol),
-      vjust = -1,
-      size = 3
-    ) +
-    # Carteira de Variância Mínima (O seu resultado do solve.QP)
-    geom_point(
-      aes(x = risco_otimo, y = retorno_otimo),
-      color = "black",
-      shape = 18,
-      size = 6
-    ) +
-    annotate(
-      "text",
-      x = risco_otimo,
-      y = retorno_otimo,
-      label = "CARTEIRA ÓTIMA (GMV)",
-      vjust = 2,
-      fontface = "bold"
-    ) +
-    labs(
-      title = "Fronteira Eficiente Global de Markowitz",
-      subtitle = "Comparação entre ativos individuais e a alocação otimizada",
-      x = "Risco (Volatilidade Anualizada)",
-      y = "Retorno Esperado Anual (CAPM)",
-      color = "Ativos"
-    ) +
-    theme_minimal()
+  for (i in 1:n_sim) {
+    w <- runif(n_ativos)
+    w <- w / sum(w)
+    ret_sim <- sum(w * mu)
+    risco_sim <- sqrt(t(w) %*% (cov_matrix * 252) %*% w)
+    sim_mat[i, ] <- c(w, ret_sim, risco_sim)
+  }
+
+  # 2. Criação do DF com nomes explícitos e limpos
+  df_sim <- as.data.frame(sim_mat)
+  # Forçamos nomes válidos para evitar o erro de mutate()
+  colnames(df_sim) <- make.names(c(nomes_ativos, "Retorno", "Risco"))
+
+  # Atualizamos a lista de nomes para bater com os novos nomes da coluna
+  nomes_colunas_ativos <- colnames(df_sim)[1:n_ativos]
+
+  # 3. Processamento do Hover
+  df_sim <- df_sim %>%
+    mutate(
+      sharpe = (Retorno - r_f) / Risco,
+      # Usamos rowwise() para facilitar a iteração por linha
+      texto_hover = pmap_chr(
+        select(., all_of(nomes_colunas_ativos)),
+        function(...) {
+          pesos <- c(...)
+          txt <- paste0(
+            nomes_ativos,
+            ": ",
+            round(pesos * 100, 1),
+            "%",
+            collapse = "<br>"
+          )
+          return(txt)
+        }
+      )
+    )
+
+  # 4. Plotly
+  plot_ly(
+    data = df_sim,
+    x = ~Risco,
+    y = ~Retorno,
+    type = 'scatter',
+    mode = 'markers',
+    marker = list(
+      color = ~sharpe,
+      colorscale = 'Viridis',
+      showscale = TRUE,
+      size = 5,
+      opacity = 0.6
+    ),
+    text = ~texto_hover,
+    hoverinfo = 'text+x+y'
+  ) %>%
+    plotly::layout(
+      title = "Fronteira Eficiente: Passe o mouse para ver os pesos",
+      xaxis = list(title = "Risco (Volatilidade Anual)", tickformat = ".1%"),
+      yaxis = list(title = "Retorno Esperado (Anual)", tickformat = ".1%"),
+      hovermode = "closest"
+    )
 }

@@ -1,5 +1,6 @@
 rm(list = ls())
 
+
 source("graphs.r")
 
 
@@ -8,6 +9,9 @@ library(tidyverse)
 library(slider)
 library(jsonlite)
 library(lubridate)
+
+library(plotly)
+
 #### ================== 1. Get & Proccess Data
 # price, volatility, expected return, correlations (p) para preço e IBOV; Dados do CDI acumulado
 
@@ -25,10 +29,12 @@ tickers = c(
   "TTWO",
   "SNDK"
 )
+
 end <- today()
 start <- end - years(2)
 
 stocks_data = tq_get(tickers, from = start, to = end) |>
+  distinct(symbol, date, .keep_all = TRUE) |>
   group_by(symbol) |>
   mutate(
     log_return = log(adjusted / lag(adjusted)),
@@ -109,10 +115,10 @@ E_Rm <- log(ibov_alvo_mediana / ibov_atual) + dy_esperado
 ## aplicando o CAPM
 capm_results <- stocks_data |>
   select(symbol, date, log_return) |>
+  group_by(symbol) |>
   drop_na(log_return) |>
   # Alinhamos as datas das ações com as datas do Ibovespa
   inner_join(ibov_data, by = "date") |>
-  group_by(symbol) |>
   summarise(
     # Beta = Covariância(Ativo, Mercado) / Variância(Mercado)
     beta = cov(log_return, log_return_m) / var(log_return_m), # Revisar
@@ -144,6 +150,7 @@ returns_wide <- stocks_data |>
 # Selecionamos todas as colunas numéricas (excluindo a coluna 1: 'date')
 cov_matrix <- cov(returns_wide[-1])
 cor_matrix = cov2cor(cov_matrix)
+
 print("MATRIZ DE CORRELAÇÃO ENTRE ATIVOS")
 print(cor_matrix)
 
@@ -219,7 +226,17 @@ print(stocks_stats)
 
 # Rodar os gráficos (Agora com a tabela correta)
 gera_graf_fronteiras("TTWO", "VALE3.SA")
-gera_fronteira_global(mu, cov_matrix, stocks_stats)
+gera_fronteira_global(mu, cov_matrix, stocks_stats, n_sim = 50000)
+
+
+mu <- capm_results$expected_return
+names(mu) <- capm_results$symbol
+
+# Agora chame a função
+plot_fronteira_interativa(mu, cov_matrix, r_f)
+
+p_interativo <- plot_fronteira_interativa(mu, cov_matrix, r_f)
+p_interativo
 
 ## ====================== BACKTESTING
 

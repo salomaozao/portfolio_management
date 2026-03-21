@@ -47,6 +47,78 @@ gera_graf_fronteiras = function(a, b) {
     theme(legend.position = "bottom")
 }
 
+
+gera_fronteira_global = function(mu, sigma_mat, stocks_stats, n_sim = 5000) {
+  n_ativos <- length(mu)
+
+  # 1. Simulação de Portfólios Aleatórios para preencher o gráfico
+  sim_resultados <- matrix(NA, nrow = n_sim, ncol = 2)
+  colnames(sim_resultados) <- c("Risco", "Retorno")
+
+  for (i in 1:n_sim) {
+    w_random <- runif(n_ativos)
+    w_random <- w_random / sum(w_random)
+
+    sim_resultados[i, "Retorno"] <- sum(w_random * mu)
+    sim_resultados[i, "Risco"] <- sqrt(
+      t(w_random) %*% (sigma_mat * 252) %*% w_random
+    )
+  }
+
+  df_sim <- as_tibble(sim_resultados)
+
+  # 2. Ponto da Carteira Ótima (já calculada pelo seu solve.QP)
+  # Assumindo que 'otimizacao' e 'pesos_otimos' já existem no seu environment
+  risco_otimo <- sqrt(t(pesos_otimos) %*% (sigma_mat * 252) %*% pesos_otimos)
+  retorno_otimo <- sum(pesos_otimos * mu)
+
+  # 3. Plotagem
+  ggplot() +
+    # Nuvem de portfólios possíveis
+    geom_point(
+      data = df_sim,
+      aes(x = Risco, y = Retorno),
+      alpha = 0.2,
+      color = "grey"
+    ) +
+    # Ativos individuais
+    geom_point(
+      data = stocks_stats,
+      aes(x = volatilidade_anual_ultima, y = expected_return, color = symbol),
+      size = 3
+    ) +
+    geom_text(
+      data = stocks_stats,
+      aes(x = volatilidade_anual_ultima, y = expected_return, label = symbol),
+      vjust = -1,
+      size = 3
+    ) +
+    # Carteira de Variância Mínima (O seu resultado do solve.QP)
+    geom_point(
+      aes(x = risco_otimo, y = retorno_otimo),
+      color = "black",
+      shape = 18,
+      size = 6
+    ) +
+    annotate(
+      "text",
+      x = risco_otimo,
+      y = retorno_otimo,
+      label = "CARTEIRA ÓTIMA (GMV)",
+      vjust = 2,
+      fontface = "bold"
+    ) +
+    labs(
+      title = "Fronteira Eficiente Global de Markowitz",
+      subtitle = "Comparação entre ativos individuais e a alocação otimizada",
+      x = "Risco (Volatilidade Anualizada)",
+      y = "Retorno Esperado Anual (CAPM)",
+      color = "Ativos"
+    ) +
+    theme_minimal()
+}
+
+
 plot_fronteira_interativa <- function(mu, cov_matrix, r_f, n_sim = 5000) {
   # Garante que mu seja um vetor nomeado (essencial para o hover)
   if (is.null(names(mu))) {
@@ -62,6 +134,11 @@ plot_fronteira_interativa <- function(mu, cov_matrix, r_f, n_sim = 5000) {
   for (i in 1:n_sim) {
     w <- runif(n_ativos)
     w <- w / sum(w)
+
+    # Zera os pesos menores que 3%
+    w[w < 0.03] <- 0
+    w <- w / sum(w)
+
     ret_sim <- sum(w * mu)
     risco_sim <- sqrt(t(w) %*% (cov_matrix * 252) %*% w)
     sim_mat[i, ] <- c(w, ret_sim, risco_sim)
@@ -118,5 +195,48 @@ plot_fronteira_interativa <- function(mu, cov_matrix, r_f, n_sim = 5000) {
       xaxis = list(title = "Risco (Volatilidade Anual)", tickformat = ".1%"),
       yaxis = list(title = "Retorno Esperado (Anual)", tickformat = ".1%"),
       hovermode = "closest"
+    )
+}
+
+# ================== Gráficos de Backtest e Heatmap ==================
+
+gera_graf_backtest <- function(comparativo_performance) {
+  ggplot(comparativo_performance, aes(x = date, y = Valor, color = Estrategia)) +
+    geom_line(size = 1) +
+    scale_color_manual(
+      values = c("Carteira" = "#2c3e50", "Ibovespa" = "#e74c3c")
+    ) +
+    labs(
+      title = "Performance Histórica: Markowitz vs. Ibovespa",
+      subtitle = "Simulação baseada na otimização de Máximo Sharpe Ratio",
+      x = "Período",
+      y = "Patrimônio Acumulado (R$)"
+    ) +
+    theme_minimal()
+}
+
+gera_heatmap_correlacao <- function(cor_matrix) {
+  cor_long <- as.data.frame(cor_matrix) |>
+    rownames_to_column(var = "Ativo1") |>
+    pivot_longer(cols = -Ativo1, names_to = "Ativo2", values_to = "Correlacao")
+
+  ggplot(cor_long, aes(x = Ativo1, y = Ativo2, fill = Correlacao)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = round(Correlacao, 2)), size = 3, color = "black") +
+    scale_fill_gradient2(
+      low = "#d73027",
+      mid = "white",
+      high = "#4575b4",
+      midpoint = 0,
+      limit = c(-1, 1),
+      name = "Correlação\n(Pearson)"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    labs(
+      title = "Matriz de Dependência Linear entre Ativos",
+      subtitle = "Calculada sobre os log-retornos diários",
+      x = "",
+      y = ""
     )
 }

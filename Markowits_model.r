@@ -13,7 +13,7 @@ library(lubridate)
 library(plotly)
 
 #### ================== 1. Get & Proccess Data
-# price, volatility, expected return, correlations (p) para preço e IBOV; Dados do CDI acumulado
+# price, volatility, expected return, correlations (p) para pr+eço e IBOV; Dados do CDI acumulado
 
 ### Para as ações do portfólio: Retornos, volatilidade
 tickers = c(
@@ -26,6 +26,12 @@ tickers = c(
   "ITUB4.SA",
   "VALE3.SA",
   "AXIA3.SA",
+  "CMIG4.SA",
+  "CYRE4.SA",
+  "RDOR3.SA",
+  "WEGE3.SA",
+  "KLBN11.SA",
+  "EGIE3.SA",
   "TTWO",
   "SNDK"
 )
@@ -64,6 +70,7 @@ if (length(tickers_faltantes) > 0) {
 
 ### Preço do ibov; Retorno esperado do mercado (R_m)
 ibov_data <- tq_get("^BVSP", from = start, to = end) |>
+  distinct(date, .keep_all = TRUE) |>
   mutate(log_return_m = log(adjusted / lag(adjusted))) |>
   drop_na(log_return_m) |>
   select(date, log_return_m, adjusted)
@@ -168,17 +175,17 @@ sigma_mat <- cov_matrix # Matriz de Covariância (Σ)
 n <- length(mu) # Número de ativos (BABA e PETR4)
 
 # 2. Configurar a Matriz de Restrições (Amat)
-# Linha 1: soma dos pesos = 1
-# Demais linhas: pesos individuais >= 0 (identidade)
-Amat <- cbind(1, diag(n))
+# Para o Ponto Tangente (Máximo Sharpe Ratio), transformamos os pesos: y = w / (w^T * excesso_retorno)
+excesso_retorno <- mu - r_f
+A_min_peso <- diag(n) - matrix(0.05, n, n) # Restrição para w_i >= 0.05
+Amat <- cbind(excesso_retorno, A_min_peso)
 
 # 3. Configurar o vetor de restrições (bvec)
-# O primeiro valor é 1 (soma), os demais são 0 (mínimo por ativo)
+# A primeira é a igualdade ao retorno 1, o resto é a restrição >= 0
 bvec <- c(1, rep(0, n))
 
-# 4. Resolver para a Carteira de Variância Mínima Global (GMV)
-# solve.QP(Dmat, dvec, Amat, bvec, meq)
-# meq = 1 indica que a primeira restrição é uma IGUALDADE (=1)
+# 4. Resolver para a Carteira Tangente (Máximo Sharpe)
+# minimize y^T Sigma y  sujeito a y^T excesso_retorno = 1 e y_i - 0.05 * sum(y) >= 0
 otimizacao <- solve.QP(
   Dmat = cov_matrix * 252,
   dvec = rep(0, n),
@@ -188,7 +195,8 @@ otimizacao <- solve.QP(
 )
 
 # 5. Extrair os pesos ideais
-pesos_otimos <- otimizacao$solution
+y_otimo <- otimizacao$solution
+pesos_otimos <- y_otimo / sum(y_otimo) # Normaliza para recuperar os pesos w que somam 1
 df_pesos <- tibble(
   symbol = row.names(sigma_mat),
   alocacao_otima_pct = pesos_otimos * 100
@@ -218,6 +226,15 @@ stocks_stats <- stocks_stats |>
   mutate(
     # Garantir que se algum peso veio como NA (não processado), seja 0
     alocacao_otima_pct = replace_na(alocacao_otima_pct, 0),
+    # Zera menores que 3% e recalcula para fechar 100%
+    alocacao_ajustada_pct = ifelse(
+      alocacao_otima_pct < 3,
+      0,
+      alocacao_otima_pct
+    ),
+    alocacao_ajustada_pct = (alocacao_ajustada_pct /
+      sum(alocacao_ajustada_pct)) *
+      100,
     across(where(is.numeric), \(x) round(x, 4))
   )
 
@@ -225,7 +242,7 @@ print("TABELA FINAL CONSOLIDADA:")
 print(stocks_stats)
 
 # Rodar os gráficos (Agora com a tabela correta)
-gera_graf_fronteiras("TTWO", "VALE3.SA")
+# gera_graf_fronteiras("TTWO", "VALE3.SA")
 gera_fronteira_global(mu, cov_matrix, stocks_stats, n_sim = 50000)
 
 
@@ -233,21 +250,22 @@ mu <- capm_results$expected_return
 names(mu) <- capm_results$symbol
 
 # Agora chame a função
-plot_fronteira_interativa(mu, cov_matrix, r_f)
 
-p_interativo <- plot_fronteira_interativa(mu, cov_matrix, r_f)
-p_interativo
+p_interativo = plot_fronteira_interativa(mu, cov_matrix, r_f)
+print(p_interativo)
 
 ## ====================== BACKTESTING
 
 # 1. Preparar pesos (Garantindo que a soma seja exatamente 1 para evitar erros no tq_portfolio)
 w_backtest <- stocks_stats |>
-  select(symbol, alocacao_otima_pct) |>
-  mutate(weight = alocacao_otima_pct / 100) |>
+  select(symbol, alocacao_ajustada_pct) |>
+  mutate(weight = alocacao_ajustada_pct / 100) |>
   select(symbol, weight)
 
 # 2. Calcular o retorno da carteira
 portfolio_returns <- stocks_data |>
+  filter(symbol %in% w_backtest$symbol) |>
+  drop_na(log_return) |>
   tq_portfolio(
     assets_col = symbol,
     returns_col = log_return,
@@ -261,6 +279,7 @@ ibov_benchmark <- ibov_data |>
 # 3. Benchmark e Acúmulo
 comparativo_performance <- portfolio_returns |>
   left_join(ibov_benchmark, by = "date") |>
+  drop_na(retorno_carteira, retorno_ibov) |>
   mutate(
     # Usando exp(cumsum) para retornos logarítmicos
     Carteira = exp(cumsum(retorno_carteira)) * 100,
@@ -273,22 +292,13 @@ comparativo_performance <- portfolio_returns |>
   )
 
 # 5. Plot Final
-ggplot(comparativo_performance, aes(x = date, y = Valor, color = Estrategia)) +
-  geom_line(size = 1) +
-  scale_color_manual(
-    values = c("Carteira" = "#2c3e50", "Ibovespa" = "#e74c3c")
-  ) +
-  labs(
-    title = "Performance Histórica: Markowitz vs. Ibovespa",
-    subtitle = "Simulação baseada na otimização de Variância Mínima",
-    x = "Período",
-    y = "Patrimônio Acumulado (R$)"
-  ) +
-  theme_minimal()
+p_backtest <- gera_graf_backtest(comparativo_performance)
+p_backtest
 
 ## Tabela de rendimento
 # 1. Calcula o retorno acumulado real de cada ativo
 rendimento_historico <- stocks_data |>
+  filter(symbol %in% w_backtest$symbol) |>
   group_by(symbol) |>
   summarise(
     Retorno_Real_Total = (exp(sum(log_return)) - 1) * 100,
@@ -307,7 +317,13 @@ perf_resumo <- comparativo_performance |>
 
 # 3. Consolida tudo na Stocks Stats
 tabela_final <- stocks_stats |>
-  select(symbol, expected_return, beta, alocacao_otima_pct) |>
+  select(
+    symbol,
+    expected_return,
+    beta,
+    alocacao_otima_pct,
+    alocacao_ajustada_pct
+  ) |>
   left_join(rendimento_historico, by = "symbol") |>
   bind_rows(perf_resumo) |>
   mutate(
@@ -316,7 +332,8 @@ tabela_final <- stocks_stats |>
   ) |>
   select(
     Ativo = symbol,
-    `Peso (%)` = alocacao_otima_pct,
+    `Peso Máximo Sharpe (%)` = alocacao_otima_pct,
+    `Peso Ajustado (%)` = alocacao_ajustada_pct,
     `Retorno Esperado (%)` = expected_return_pct,
     `Retorno Real (%)` = Retorno_Real_Total,
     Beta = beta
@@ -326,27 +343,5 @@ print("RELATÓRIO DE RENDIMENTOS:")
 print(tabela_final)
 
 # ================== . Matriz de Correlação (Heatmap)
-# Transformar a matriz em formato longo para o ggplot
-cor_long <- as.data.frame(cor_matrix) |>
-  rownames_to_column(var = "Ativo1") |>
-  pivot_longer(cols = -Ativo1, names_to = "Ativo2", values_to = "Correlacao")
-
-ggplot(cor_long, aes(x = Ativo1, y = Ativo2, fill = Correlacao)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = round(Correlacao, 2)), size = 3, color = "black") +
-  scale_fill_gradient2(
-    low = "#d73027",
-    mid = "white",
-    high = "#4575b4",
-    midpoint = 0,
-    limit = c(-1, 1),
-    name = "Correlação\n(Pearson)"
-  ) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-  labs(
-    title = "Matriz de Dependência Linear entre Ativos",
-    subtitle = "Calculada sobre os log-retornos diários",
-    x = "",
-    y = ""
-  )
+p_heatmap <- gera_heatmap_correlacao(cor_matrix)
+p_heatmap

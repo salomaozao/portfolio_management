@@ -168,7 +168,7 @@ print(cor_matrix)
 #  Retorno Alvo: $\sum w_i E[R_i] = \mu_{alvo}$.
 library(quadprog)
 
-# 1. Definir os inputs baseados no que você já calculou
+# 1. Definir os inputs
 mu <- capm_results$expected_return # Vetor E[R] (CAPM)
 stocks_processed = row.names(cov_matrix)
 sigma_mat <- cov_matrix # Matriz de Covariância (Σ)
@@ -241,18 +241,10 @@ stocks_stats <- stocks_stats |>
 print("TABELA FINAL CONSOLIDADA:")
 print(stocks_stats)
 
-# Rodar os gráficos (Agora com a tabela correta)
-# gera_graf_fronteiras("TTWO", "VALE3.SA")
-gera_fronteira_global(mu, cov_matrix, stocks_stats, n_sim = 50000)
-
 
 mu <- capm_results$expected_return
 names(mu) <- capm_results$symbol
 
-# Agora chame a função
-
-p_interativo = plot_fronteira_interativa(mu, cov_matrix, r_f)
-print(p_interativo)
 
 ## ====================== BACKTESTING
 
@@ -291,11 +283,6 @@ comparativo_performance <- portfolio_returns |>
     values_to = "Valor"
   )
 
-# 5. Plot Final
-p_backtest <- gera_graf_backtest(comparativo_performance)
-p_backtest
-
-## Tabela de rendimento
 # 1. Calcula o retorno acumulado real de cada ativo
 rendimento_historico <- stocks_data |>
   filter(symbol %in% w_backtest$symbol) |>
@@ -339,9 +326,20 @@ tabela_final <- stocks_stats |>
     Beta = beta
   )
 
-print("RELATÓRIO DE RENDIMENTOS:")
-print(tabela_final)
 
-# ================== . Matriz de Correlação (Heatmap)
+# ================== . Visualizações
 p_heatmap <- gera_heatmap_correlacao(cor_matrix)
 p_heatmap
+
+# gera_graf_fronteiras("TTWO", "VALE3.SA")
+gera_fronteira_global(mu, cov_matrix, stocks_stats, n_sim = 50000)
+
+p_backtest <- gera_graf_backtest(comparativo_performance)
+p_backtest
+
+p_interativo = plot_fronteira_interativa(mu, cov_matrix, r_f)
+print(p_interativo)
+
+print("RELATÓRIO DE RENDIMENTOS:")
+print(tabela_final)
+  

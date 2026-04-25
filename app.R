@@ -8,6 +8,8 @@ library(lubridate)
 library(plotly)
 library(quadprog)
 
+setwd("C:/Users/GabrielNascimento/Documents/Gabriel/cientificas/portfolio_management")
+
 source("graphs.r")
 
 ui <- page_sidebar(
@@ -16,7 +18,7 @@ ui <- page_sidebar(
     textInput(
       "tickers",
       "Tickers (separados por vírgula):",
-      value = "XINA11.SA, BTC-BRL, VALE3.SA, ITUB4.SA, WEGE3.SA, EGIE3.SA, BRAX11.SA, GOLD11.SA"
+      value = "XINA11.SA, BTC-BRL, VALE3.SA, ITUB4.SA, WEGE3.SA, EGIE3.SA, BRAX11.SA, GOLD11.SA, XOM, LMT"
     ),
     numericInput(
       "min_weight",
@@ -28,7 +30,7 @@ ui <- page_sidebar(
     numericInput(
       "ibov_alvo",
       "Ibovespa Alvo (para CAPM):",
-      value = 196000,
+      value = 230000,
       step = 1000
     ),
     numericInput(
@@ -160,6 +162,16 @@ server <- function(input, output, session) {
     n <- length(mu)
 
     excesso_retorno <- mu - r_f
+    
+    if (max(excesso_retorno) <= 0) {
+      showNotification(
+        "Erro (Prêmio de Risco Negativo): O ganho esperado dos ativos está abaixo da taxa livre de risco! Aumente o Ibovespa Alvo pois o Ibov atual já atingiu/superou sua meta, gerando retorno negativo no CAPM.",
+        type = "error",
+        duration = 10
+      )
+      return(NULL)
+    }
+
     A_min_peso <- diag(n) - matrix(peso_min, n, n)
     Amat <- cbind(excesso_retorno, A_min_peso)
     bvec <- c(1, rep(0, n))
